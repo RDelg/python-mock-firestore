@@ -4,8 +4,9 @@ import operator
 from typing import List, Dict, Any
 from mockfirestore import NotFound
 from mockfirestore._helpers import (
-    Timestamp, Document, Store, get_by_path, set_by_path, delete_by_path, get_document_iterator
+    Timestamp, Document, Store, get_by_path, set_by_path, delete_by_path
 )
+from mockfirestore.transforms import _apply_transformations
 
 
 class DocumentSnapshot:
@@ -88,48 +89,3 @@ class DocumentReference:
         if name not in document:
             set_by_path(self._data, new_path, {})
         return CollectionReference(self._data, new_path, parent=self)
-
-
-def _apply_transformations(document: Dict[str, Any], data: Dict[str, Any]):
-    """Handles special fields like INCREMENT."""
-    increments = {}
-    arr_unions = {}
-
-    for key, value in get_document_iterator(data):
-        if not value.__class__.__module__.startswith('google.cloud.firestore'):
-            # Unfortunately, we can't use `isinstance` here because that would require
-            # us to declare google-cloud-firestore as a dependency for this library.
-            # However, it's somewhat strange that the mocked version of the library
-            # requires the library itself, so we'll just leverage this heuristic as a
-            # means of identifying it.
-            #
-            # Furthermore, we don't hardcode the full module name, since the original
-            # library seems to use a thin shim to perform versioning. e.g. at the time
-            # of writing, the full module name is `google.cloud.firestore_v1.transforms`,
-            # and it can evolve to `firestore_v2` in the future.
-            continue
-
-        transformer = value.__class__.__name__
-        if transformer == 'Increment':
-            increments[key] = value.value
-        elif transformer == 'ArrayUnion':
-            arr_unions[key] = value.values
-
-        # All other transformations can be applied as needed.
-        # See #29 for tracking.
-    
-    def _update_data(new_values: dict, default: Any):
-        for key, value in new_values.items():
-            path = key.split('.')
-
-            try:
-                item = get_by_path(document, path)
-            except (TypeError, KeyError):
-                item = default
-
-            set_by_path(data, path, item + value)
-    
-    _update_data(increments, 0)
-    _update_data(arr_unions, [])
-
-    document.update(data)
